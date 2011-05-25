@@ -14,7 +14,7 @@ from fudge import with_patched_object
 from fabric.state import env
 from fabric.operations import require, prompt, _sudo_prefix, _shell_wrap, \
     _shell_escape
-from fabric.api import get, put, hide, show, cd, lcd
+from fabric.api import get, put, hide, show, cd, lcd, local
 from fabric.sftp import SFTP
 
 from utils import *
@@ -78,6 +78,30 @@ def test_require_mixed_state_keys_prints_missing_only():
         err = sys.stderr.getvalue()
         assert 'version' not in err
         assert 'foo' in err
+
+
+@mock_streams('stderr')
+@raises(SystemExit)
+def test_require_iterable_provided_by_key():
+    """
+    When given a provided_by iterable value, require() raises SystemExit
+    """
+    # 'version' is one of the default values, so we know it'll be there
+    def fake_providing_function():
+        pass
+    require('foo', provided_by=[fake_providing_function])
+
+
+@mock_streams('stderr')
+@raises(SystemExit)
+def test_require_noniterable_provided_by_key():
+    """
+    When given a provided_by noniterable value, require() raises SystemExit
+    """
+    # 'version' is one of the default values, so we know it'll be there
+    def fake_providing_function():
+        pass
+    require('foo', provided_by=fake_providing_function)
 
 
 #
@@ -218,6 +242,17 @@ class TestFileTransfers(FabricTest):
     #
     # get()
     #
+
+    @server(files={'/home/user/.bashrc': 'bash!'}, home='/home/user')
+    def test_get_relative_remote_dir_uses_home(self):
+        """
+        get('relative/path') should use remote $HOME
+        """
+        with hide('everything'):
+            # Another if-it-doesn't-error-out-it-passed test; meh.
+            eq_(get('.bashrc', self.path()), [self.path('.bashrc')])
+
+
 
     @server()
     def test_get_single_file(self):
@@ -480,6 +515,49 @@ class TestFileTransfers(FabricTest):
             assert self.exists_locally(tmp + "bar/file3.txt")
 
 
+    @server()
+    def test_get_returns_list_of_local_paths(self):
+        """
+        get() should return an iterable of the local files it created.
+        """
+        d = self.path()
+        with hide('everything'):
+            retval = get('tree', d)
+        files = ['file1.txt', 'file2.txt', 'subfolder/file3.txt']
+        eq_(map(lambda x: os.path.join(d, 'tree', x), files), retval)
+
+
+    @server()
+    def test_get_returns_none_for_stringio(self):
+        """
+        get() should return None if local_path is a StringIO
+        """
+        with hide('everything'):
+            eq_([], get('/file.txt', StringIO()))
+
+
+    @server()
+    def test_get_return_value_failed_attribute(self):
+        """
+        get()'s return value should indicate any paths which failed to download.
+        """
+        with settings(hide('everything'), warn_only=True):
+            retval = get('/doesnt/exist', self.path())
+        eq_(['/doesnt/exist'], retval.failed)
+        assert not retval.succeeded
+
+
+    @server()
+    def test_get_should_not_use_windows_slashes_in_remote_paths(self):
+        """
+        sftp.glob() should always use Unix-style slashes.
+        """
+        with hide('everything'):
+            path = "/tree/file1.txt"
+            sftp = SFTP(env.host_string)
+            eq_(sftp.glob(path), [path])
+
+
 
     #
     # put()
@@ -573,6 +651,42 @@ class TestFileTransfers(FabricTest):
         put('thisfiledoesnotexist', '/tmp')
 
 
+    @server()
+    def test_put_returns_list_of_remote_paths(self):
+        """
+        put() should return an iterable of the remote files it created.
+        """
+        p = 'uploaded.txt'
+        f = self.path(p)
+        with open(f, 'w') as fd:
+            fd.write("contents")
+        with hide('everything'):
+            retval = put(f, p)
+        eq_(retval, [p])
+
+
+    @server()
+    def test_put_returns_list_of_remote_paths_with_stringio(self):
+        """
+        put() should return a one-item iterable when uploading from a StringIO
+        """
+        f = 'uploaded.txt'
+        with hide('everything'):
+            eq_(put(StringIO('contents'), f), [f])
+
+
+    @server()
+    def test_put_return_value_failed_attribute(self):
+        """
+        put()'s return value should indicate any paths which failed to upload.
+        """
+        with settings(hide('everything'), warn_only=True):
+            f = StringIO('contents')
+            retval = put(f, '/nonexistent/directory/structure')
+        eq_(["<StringIO>"], retval.failed)
+        assert not retval.succeeded
+
+
 
     #
     # Interactions with cd()
@@ -657,69 +771,31 @@ class TestFileTransfers(FabricTest):
         assert self.exists_locally(os.path.join(d, f))
 
 
-    @server()
-    def test_get_returns_list_of_local_paths(self):
-        """
-        get() should return an iterable of the local files it created.
-        """
-        d = self.path()
-        with hide('everything'):
-            retval = get('tree', d)
-        files = ['file1.txt', 'file2.txt', 'subfolder/file3.txt']
-        eq_(map(lambda x: os.path.join(d, 'tree', x), files), retval)
+#
+# local()
+#
 
+# TODO: figure out how to mock subprocess, if it's even possible.
+# For now, simply test to make sure local() does not raise exceptions with
+# various settings enabled/disabled.
 
-    @server()
-    def test_get_returns_none_for_stringio(self):
-        """
-        get() should return None if local_path is a StringIO
-        """
-        with hide('everything'):
-            eq_([], get('/file.txt', StringIO()))
-
-
-    @server()
-    def test_put_returns_list_of_remote_paths(self):
-        """
-        put() should return an iterable of the remote files it created.
-        """
-        p = 'uploaded.txt'
-        f = self.path(p)
-        with open(f, 'w') as fd:
-            fd.write("contents")
-        with hide('everything'):
-            retval = put(f, p)
-        eq_(retval, [p])
-
-
-    @server()
-    def test_put_returns_list_of_remote_paths_with_stringio(self):
-        """
-        put() should return a one-item iterable when uploading from a StringIO
-        """
-        f = 'uploaded.txt'
-        with hide('everything'):
-            eq_(put(StringIO('contents'), f), [f])
-
-
-    @server()
-    def test_put_return_value_failed_attribute(self):
-        """
-        put()'s return value should indicate any paths which failed to upload.
-        """
-        with settings(hide('everything'), warn_only=True):
-            f = StringIO('contents')
-            retval = put(f, '/nonexistent/directory/structure')
-        eq_(["<StringIO>"], retval.failed)
-        assert not retval.succeeded
-
-
-    @server()
-    def test_get_return_value_failed_attribute(self):
-        """
-        get()'s return value should indicate any paths which failed to download.
-        """
-        with settings(hide('everything'), warn_only=True):
-            retval = get('/doesnt/exist', self.path())
-        eq_(['/doesnt/exist'], retval.failed)
-        assert not retval.succeeded
+def test_local_output_and_capture():
+    for capture in (True, False):
+        for stdout in (True, False):
+            for stderr in (True, False):
+                hides, shows = ['running'], []
+                if stdout:
+                    hides.append('stdout')
+                else:
+                    shows.append('stdout')
+                if stderr:
+                    hides.append('stderr')
+                else:
+                    shows.append('stderr')
+                with nested(hide(*hides), show(*shows)):
+                    d = "local(): capture: %r, stdout: %r, stderr: %r" % (
+                        capture, stdout, stderr
+                    )
+                    local.description = d
+                    yield local, "echo 'foo' >/dev/null", capture
+                    del local.description

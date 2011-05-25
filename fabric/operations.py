@@ -19,7 +19,8 @@ from contextlib import closing
 from fabric.context_managers import settings, char_buffered
 from fabric.io import output_loop, input_loop
 from fabric.network import needs_host
-from fabric.state import env, connections, output, win32, default_channel
+from fabric.state import (env, connections, output, win32, default_channel,
+    io_sleep)
 from fabric.utils import abort, indent, warn, puts
 from fabric.thread_handling import ThreadHandler
 from fabric.sftp import SFTP
@@ -135,9 +136,9 @@ def require(*keys, **kwargs):
     so format it appropriately.
 
     The optional keyword argument ``provided_by`` may be a list of functions or
-    function names which the user should be able to execute in order to set the
-    key or keys; it will be included in the error output if requirements are
-    not met.
+    function names or a single function or function name which the user should
+    be able to execute in order to set the key or keys; it will be included in
+    the error output if requirements are not met.
 
     Note: it is assumed that the keyword arguments apply to all given keys as a
     group. If you feel the need to specify more than one ``used_for``, for
@@ -169,7 +170,9 @@ def require(*keys, **kwargs):
     # And print provided_by if given
     if 'provided_by' in kwargs:
         funcs = kwargs['provided_by']
-        # Pluralize this too
+        # non-iterable is given, treat it as a list of this single item
+        if not hasattr(funcs, '__iter__'):
+            funcs = [funcs]
         if len(funcs) > 1:
             command = "one of the following commands"
         else:
@@ -438,7 +441,7 @@ def get(remote_path, local_path=None):
     Download one or more files from a remote host.
 
     `~fabric.operations.get` returns an iterable containing the absolute paths
-    to all files downloaded, which will be empty if ``local_path`` was a
+    to all local files downloaded, which will be empty if ``local_path`` was a
     StringIO object (see below for more on using StringIO). This object will
     also exhibit a ``.failed`` attribute containing any remote file paths which
     failed to download, and a ``.succeeded`` attribute equivalent to ``not
@@ -551,15 +554,22 @@ def get(remote_path, local_path=None):
     ftp = SFTP(env.host_string)
 
     with closing(ftp) as ftp:
+        home = ftp.normalize('.')
         # Expand home directory markers (tildes, etc)
         if remote_path.startswith('~'):
-            remote_path = remote_path.replace('~', ftp.normalize('.'), 1)
+            remote_path = remote_path.replace('~', home, 1)
         if local_is_path:
             local_path = os.path.expanduser(local_path)
 
         # Honor cd() (assumes Unix style file paths on remote end)
-        if not os.path.isabs(remote_path) and env.get('cwd'):
-            remote_path = env.cwd.rstrip('/') + '/' + remote_path
+        if not os.path.isabs(remote_path):
+            # Honor cwd if it's set (usually by with cd():)
+            if env.get('cwd'):
+                remote_path = env.cwd.rstrip('/') + '/' + remote_path
+            # Otherwise, be relative to remote home directory (SFTP server's
+            # '.')
+            else:
+                remote_path = os.path.join(home, remote_path)
 
         # Track final local destination files so we can return a list
         local_files = []
@@ -747,6 +757,7 @@ def _execute(channel, command, pty=True, combine_stderr=True,
                     e = worker.exception
                     if e:
                         raise e[0], e[1], e[2]
+            time.sleep(io_sleep)
 
         # Obtain exit code of remote program now that we're done.
         status = channel.recv_exit_status()
@@ -983,17 +994,23 @@ def local(command, capture=False):
         print("[localhost] local: " + given_command)
     # Tie in to global output controls as best we can; our capture argument
     # takes precedence over the output settings.
+    dev_null = None
     if capture:
         out_stream = subprocess.PIPE
         err_stream = subprocess.PIPE
     else:
-        if output.stdout:
-            out_stream = None
-        if output.stderr:
-            err_stream = None
-    p = subprocess.Popen([wrapped_command], shell=True, stdout=out_stream,
+        dev_null = open(os.devnull, 'w+')
+        # Non-captured, hidden streams are discarded.
+        out_stream = None if output.stdout else dev_null
+        err_stream = None if output.stderr else dev_null
+    try:
+        cmd_arg = wrapped_command if win32 else [wrapped_command]
+        p = subprocess.Popen(cmd_arg, shell=True, stdout=out_stream,
             stderr=err_stream)
-    (stdout, stderr) = p.communicate()
+        (stdout, stderr) = p.communicate()
+    finally:
+        if dev_null is not None:
+            dev_null.close()
     # Handle error condition (deal with stdout being None, too)
     out = _AttributeString(stdout.strip() if stdout else "")
     err = _AttributeString(stderr.strip() if stderr else "")

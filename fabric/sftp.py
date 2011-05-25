@@ -47,14 +47,18 @@ class SFTP(object):
 
 
     def glob(self, path):
+        from fabric.state import win32
         dirpart, pattern = os.path.split(path)
         rlist = self.ftp.listdir(dirpart)
 
         names = fnfilter([f for f in rlist if not f[0] == '.'], pattern)
+        ret = [path]
         if len(names):
-            return [os.path.join(dirpart, name) for name in names]
-        else:
-            return [path]
+            s = '/'
+            ret = [dirpart.rstrip(s) + s + name.lstrip(s) for name in names]
+            if not win32:
+                ret = [os.path.join(dirpart, name) for name in names]
+        return ret
 
 
     def walk(self, top, topdown=True, onerror=None, followlinks=False):
@@ -232,19 +236,21 @@ class SFTP(object):
         if not local_is_path:
             os.remove(real_local_path)
         # Handle modes if necessary
-        if local_is_path and (mirror_local_mode or mode is not None):
+        if (local_is_path and mirror_local_mode) or (mode is not None):
             lmode = os.stat(local_path).st_mode if mirror_local_mode else mode
             lmode = lmode & 07777
             rmode = rattrs.st_mode & 07777
             if lmode != rmode:
                 if use_sudo:
                     with hide('everything'):
-                        sudo('chmod %s \"%s\"' % (lmode, remote_path))
+                        sudo('chmod %o \"%s\"' % (lmode, remote_path))
                 else:
                     self.ftp.chmod(remote_path, lmode)
         if use_sudo:
             with hide('everything'):
                 sudo("mv \"%s\" \"%s\"" % (remote_path, target_path))
+            # Revert to original remote_path for return value's sake
+            remote_path = target_path
         return remote_path
 
 

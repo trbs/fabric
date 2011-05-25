@@ -4,7 +4,9 @@ Module providing easy API for working with remote files and folders.
 
 from __future__ import with_statement
 
+import hashlib
 import tempfile
+import types
 import re
 import os
 
@@ -132,7 +134,6 @@ def sed(filename, before, after, limit='', use_sudo=False, backup='.bak'):
     with many nested levels of quotes and backslashes.
     """
     func = use_sudo and sudo or run
-    expr = r"sed -i%s -r -e '%ss/%s/%s/g' %s"
     # Characters to be escaped in both
     for char in "/'":
         before = before.replace(char, r'\%s' % char)
@@ -143,7 +144,24 @@ def sed(filename, before, after, limit='', use_sudo=False, backup='.bak'):
         after = after.replace(char, r'\%s' % char)
     if limit:
         limit = r'/%s/ ' % limit
-    command = expr % (backup, limit, before, after, filename)
+    # Test the OS because of differences between sed versions
+    with hide('running', 'stdout'):
+        platform = run("uname")
+    if platform in ('NetBSD', 'OpenBSD'):
+        # Attempt to protect against failures/collisions
+        hasher = hashlib.sha1()
+        hasher.update(env.host_string)
+        hasher.update(filename)
+        tmp = "/tmp/%s" % hasher.hexdigest()
+        # Use temp file to work around lack of -i
+        expr = r"""cp -p %(filename)s %(tmp)s \
+&& sed -r -e '%(limit)ss/%(before)s/%(after)s/g' %(filename)s > %(tmp)s \
+&& cp -p %(filename)s %(filename)s%(backup)s \
+&& mv %(tmp)s %(filename)s"""
+        command = expr % locals()
+    else:
+        expr = r"sed -i%s -r -e '%ss/%s/%s/g' %s"
+        command = expr % (backup, limit, before, after, filename)
     return func(command, shell=False)
 
 
@@ -204,14 +222,13 @@ def comment(filename, regex, use_sudo=False, char='#', backup='.bak'):
         "before" regex of ``r'^(foo)$'`` (and the "after" regex, naturally, of
         ``r'#\\1'``.)
     """
-    carot = ''
-    dollar = ''
+    carot, dollar = '', ''
     if regex.startswith('^'):
         carot = '^'
         regex = regex[1:]
     if regex.endswith('$'):
         dollar = '$'
-        regex = regex[:1]
+        regex = regex[:-1]
     regex = "%s(%s)%s" % (carot, regex, dollar)
     return sed(
         filename,
@@ -251,7 +268,7 @@ def contains(filename, text, exact=False, use_sudo=False):
         ))
 
 
-def append(filename, text, use_sudo=False, partial=True, escape=True):
+def append(filename, text, use_sudo=False, partial=False, escape=True):
     """
     Append string (or list of strings) ``text`` to ``filename``.
 
@@ -283,7 +300,7 @@ def append(filename, text, use_sudo=False, partial=True, escape=True):
     """
     func = use_sudo and sudo or run
     # Normalize non-list input to be a list
-    if isinstance(text, str):
+    if isinstance(text, types.StringTypes):
         text = [text]
     for line in text:
         regex = '^' + re.escape(line) + ('' if partial else '$')
