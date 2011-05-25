@@ -107,6 +107,11 @@ below.
     Sets :ref:`env.disable_known_hosts <disable-known-hosts>` to ``True``,
     preventing Fabric from loading the user's SSH known_hosts file.
 
+.. cmdoption:: -P, --reject_interactive_password
+
+    Sets :ref:`env.reject_interactive_password <reject_interactive_password>` to ``True``,
+    preventing Fabric from asking passwords interactively when connecting to hosts.
+
 .. cmdoption:: -f FABFILE, --fabfile=FABFILE
 
     The fabfile name pattern to search for (defaults to ``fabfile.py``), or

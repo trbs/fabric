@@ -124,6 +124,12 @@ env_options = [
         help="do not load user known_hosts file"
     ),
 
+    make_option('-P', 'reject_interactive_password',
+        action='store_true',
+        default=False,
+        help="do not ask for interactive passwords when trying to login"
+    ),
+
     make_option('-u', '--user',
         default=_get_system_username(),
         help="username to use when connecting to remote hosts"
@@ -244,7 +250,6 @@ env = _AttributeDict({
     'sudo_prompt': 'sudo password:',
     'use_shell': True,
     'user': None,
-    'reject_interactive_password': False,
     'version': get_version('short')
 })
 

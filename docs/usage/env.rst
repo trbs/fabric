@@ -183,6 +183,16 @@ If ``True``, the SSH layer will skip loading the user's known-hosts file.
 Useful for avoiding exceptions in situations where a "known host" changing its
 host key is actually valid (e.g. cloud servers such as EC2.)
 
+.. _reject_interactive_password:
+
+``reject_interactive_password``
+-----------------------
+
+**Default:** ``False``
+
+If ``True``, the SSH layer will not ask the user for passwords when trying to
+login on hosts.
+
 .. seealso:: :doc:`ssh`
 
 ``fabfile``
