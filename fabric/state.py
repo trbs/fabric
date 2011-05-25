@@ -124,7 +124,7 @@ env_options = [
         help="do not load user known_hosts file"
     ),
 
-    make_option('-P', 'reject_interactive_password',
+    make_option('-P', '--reject_interactive_password',
         action='store_true',
         default=False,
         help="do not ask for interactive passwords when trying to login"
